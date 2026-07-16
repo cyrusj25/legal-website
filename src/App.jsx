@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { jsPDF } from 'jspdf'
 import './App.css'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
@@ -7,6 +6,17 @@ import ProfilePage from './pages/ProfilePage'
 import ProfileSettingsPage from './pages/ProfileSettingsPage'
 import SignupPage from './pages/SignupPage'
 import WorkspaceDocumentsPage from './pages/WorkspaceDocumentsPage'
+import {
+  HARDCODED_CREDENTIALS,
+  HOME_INITIATIVES,
+  HOME_LATEST_UPDATES,
+  HOME_SPOTLIGHT_ITEMS,
+  PROFILE_DIRECTORY,
+  SETTINGS_TABS,
+  UI_THEME_STORAGE_KEY,
+  WORKFLOW_STEPS,
+  WORKFLOW_STORAGE_KEY,
+} from './config/appConfig'
 import {
   addWorkspaceHistory,
   checkWorkspaceExists,
@@ -16,514 +26,20 @@ import {
   openWorkspace,
   uploadWorkspaceDocument,
 } from './services/apiService'
-
-const HARDCODED_CREDENTIALS = {
-  userId: 'cyrusj25',
-  password: 'Data@1234567',
-  companyCode: 'DEEDLY',
-}
-
-const PROFILE_DIRECTORY = {
-  cyrusj25: {
-    fullName: 'Cyrus Johnson',
-    role: 'Portal Administrator',
-    email: 'cyrus.johnson@example.com',
-    domain: 'BLORE LLC',
-    region: 'us-east-1',
-    lastLogin: '2026-07-12T21:00:00Z',
-  },
-}
-
-const HISTORY_STORAGE_KEY = 'profile-load-history'
-
-const BUYER_DOCUMENT_DEFINITIONS = [
-  { key: 'Doc1', code: 'BA01' },
-  { key: 'Doc2', code: 'BP02' },
-  { key: 'Doc3', code: 'BI01' },
-]
-
-const SELLER_DOCUMENT_DEFINITIONS = [
-  { key: 'Doc1', code: 'SA01' },
-  { key: 'Doc2', code: 'SP01' },
-  { key: 'Doc3', code: 'SI01' },
-]
-
-const PROPERTY_DOCUMENT_DEFINITIONS = [
-  { key: 'Ekatha', code: 'EK01' },
-  { key: 'Past Sale deed', code: 'SD01' },
-  { key: 'Encumbrance Certificate (EC)', code: 'EC01' },
-]
-
-const HOME_LATEST_UPDATES = [
-  {
-    title: 'Autonomous Operations Engine Launched',
-    text: 'To ue updated',
-    tag: 'Announcement',
-  },
-  {
-    title: 'Cloud Migration Accelerator Expanded',
-    text: 'To ue updated',
-    tag: 'Platform',
-  },
-  {
-    title: 'Trust and Compliance Blueprint Published',
-    text: 'To ue updated',
-    tag: 'Insight',
-  },
-]
-
-const HOME_SPOTLIGHT_ITEMS = [
-  { title: 'AI-Driven Service Intelligence', text: 'To ue updated' },
-  { title: 'Industry-Grade Security by Design', text: 'To ue updated' },
-  { title: 'Global Delivery, Local Compliance', text: 'To ue updated' },
-]
-
-const HOME_INITIATIVES = [
-  'Client Case Studio',
-  'Sustainability Operations',
-  'Innovation Lab Network',
-  'Digital Workplace Programs',
-  'Partner Ecosystem Exchange',
-  'Talent and Career Pathways',
-]
-
-const SETTINGS_TABS = [
-  { id: 'login-history', label: 'Login History' },
-  { id: 'change-password', label: 'Change Password' },
-]
-
-const UI_THEME_STORAGE_KEY = 'ui-theme'
-const WORKFLOW_STORAGE_KEY = 'workspace-workflow-v1'
-
-const WORKFLOW_STEPS = [
-  { id: 'basic-details', label: 'Enter Basic Details' },
-  { id: 'upload-documents', label: 'Upload Documents' },
-  { id: 'review-final-details', label: 'Review Final Details' },
-  { id: 'generate-review-document', label: 'Generate Document for Review' },
-  { id: 'download-document', label: 'Download Document' },
-]
-
-function createInitialBasicDetails() {
-  return {
-    numberOfSellers: '',
-    numberOfBuyers: '',
-    contactNamePrimary: '',
-    contactPhonePrimaryCell: '',
-    contactPhonePrimaryLandline: '',
-    contactNameSecondary: '',
-    contactPhoneSecondaryCell: '',
-    contactPhoneSecondaryLandline: '',
-    notes: '',
-  }
-}
-
-function getStoredHistory() {
-  const rawValue = localStorage.getItem(HISTORY_STORAGE_KEY)
-
-  if (!rawValue) {
-    return []
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function saveHistory(historyList) {
-  localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyList))
-}
-
-function recordProfileLoad(userId) {
-  const newEntry = {
-    userId,
-    loadedAt: new Date().toISOString(),
-  }
-
-  const existing = getStoredHistory()
-  const updated = [newEntry, ...existing].slice(0, 20)
-  saveHistory(updated)
-
-  return updated
-}
-
-function createDocumentsFromDefinitions(documentDefinitions) {
-  return documentDefinitions.map((doc) => ({
-    ...doc,
-    fileName: '',
-    base64Data: '',
-    previewUrl: '',
-    lastAction: '',
-    lastStatus: '',
-  }))
-}
-
-function createInitialBuyerDocuments() {
-  return createDocumentsFromDefinitions(BUYER_DOCUMENT_DEFINITIONS)
-}
-
-function createInitialSellerDocuments() {
-  return createDocumentsFromDefinitions(SELLER_DOCUMENT_DEFINITIONS)
-}
-
-function createInitialPropertyDocuments() {
-  return createDocumentsFromDefinitions(PROPERTY_DOCUMENT_DEFINITIONS)
-}
-
-function toValidPartyCount(inputValue) {
-  const parsed = Number.parseInt(inputValue, 10)
-
-  if (Number.isNaN(parsed) || parsed < 1) {
-    return 1
-  }
-
-  return Math.min(parsed, 99)
-}
-
-function mergeDocumentList(existingDocuments, documentDefinitions) {
-  const templateDocuments = createDocumentsFromDefinitions(documentDefinitions)
-
-  if (!Array.isArray(existingDocuments)) {
-    return templateDocuments
-  }
-
-  return templateDocuments.map((templateDoc) => {
-    const matchingDoc = existingDocuments.find((doc) => doc.key === templateDoc.key)
-    return matchingDoc
-      ? {
-          ...templateDoc,
-          ...matchingDoc,
-          key: templateDoc.key,
-          code: templateDoc.code,
-        }
-      : templateDoc
-  })
-}
-
-function createInitialWorkflowDocuments(buyerCount, sellerCount) {
-  const validBuyerCount = toValidPartyCount(buyerCount)
-  const validSellerCount = toValidPartyCount(sellerCount)
-
-  return {
-    buyerDocuments: Array.from({ length: validBuyerCount }, (_, index) => ({
-      buyerNumber: index + 1,
-      documents: createInitialBuyerDocuments(),
-    })),
-    sellerDocuments: Array.from({ length: validSellerCount }, (_, index) => ({
-      sellerNumber: index + 1,
-      documents: createInitialSellerDocuments(),
-    })),
-    propertyDocuments: createInitialPropertyDocuments(),
-  }
-}
-
-function normalizeWorkflowDocumentsForCounts(existingDocuments, buyerCount, sellerCount) {
-  const validBuyerCount = toValidPartyCount(buyerCount)
-  const validSellerCount = toValidPartyCount(sellerCount)
-  const defaultDocuments = createInitialWorkflowDocuments(validBuyerCount, validSellerCount)
-
-  if (!existingDocuments || typeof existingDocuments !== 'object') {
-    return defaultDocuments
-  }
-
-  if (Array.isArray(existingDocuments)) {
-    const buyerFromLegacy = defaultDocuments.buyerDocuments.map((buyerEntry) =>
-      buyerEntry.buyerNumber === 1
-        ? { ...buyerEntry, documents: mergeDocumentList(existingDocuments) }
-        : buyerEntry,
-    )
-
-    return {
-      buyerDocuments: buyerFromLegacy,
-      sellerDocuments: defaultDocuments.sellerDocuments,
-    }
-  }
-
-  const existingBuyerDocuments = Array.isArray(existingDocuments.buyerDocuments)
-    ? existingDocuments.buyerDocuments
-    : []
-  const existingSellerDocuments = Array.isArray(existingDocuments.sellerDocuments)
-    ? existingDocuments.sellerDocuments
-    : []
-
-  const buyerIsGrouped =
-    existingBuyerDocuments.length > 0 &&
-    typeof existingBuyerDocuments[0] === 'object' &&
-    Array.isArray(existingBuyerDocuments[0]?.documents)
-
-  const normalizedBuyerDocuments = Array.from({ length: validBuyerCount }, (_, index) => {
-    const buyerNumber = index + 1
-
-    if (buyerIsGrouped) {
-      const existingBuyer = existingBuyerDocuments.find(
-        (buyerEntry) => buyerEntry?.buyerNumber === buyerNumber,
-      )
-
-      return {
-        buyerNumber,
-        documents: mergeDocumentList(existingBuyer?.documents, BUYER_DOCUMENT_DEFINITIONS),
-      }
-    }
-
-    // Supports previously saved structure where buyerDocuments was a flat list.
-    return {
-      buyerNumber,
-      documents:
-        buyerNumber === 1
-          ? mergeDocumentList(existingBuyerDocuments, BUYER_DOCUMENT_DEFINITIONS)
-          : createInitialBuyerDocuments(),
-    }
-  })
-
-  const normalizedSellerDocuments = Array.from({ length: validSellerCount }, (_, index) => {
-    const sellerNumber = index + 1
-    const existingSeller = existingSellerDocuments.find(
-      (sellerEntry) => sellerEntry?.sellerNumber === sellerNumber,
-    )
-
-    return {
-      sellerNumber,
-      documents: mergeDocumentList(existingSeller?.documents, SELLER_DOCUMENT_DEFINITIONS),
-    }
-  })
-
-  const normalizedPropertyDocuments = mergeDocumentList(
-    existingDocuments.propertyDocuments,
-    PROPERTY_DOCUMENT_DEFINITIONS,
-  )
-
-  return {
-    buyerDocuments: normalizedBuyerDocuments,
-    sellerDocuments: normalizedSellerDocuments,
-    propertyDocuments: normalizedPropertyDocuments,
-  }
-}
-
-function getAllDocumentEntries(workflowDocuments) {
-  const buyerEntries = (workflowDocuments?.buyerDocuments || []).flatMap((buyerEntry) =>
-    (buyerEntry.documents || []).map((doc) => ({
-      ownerType: 'buyer',
-      ownerIndex: buyerEntry.buyerNumber,
-      ...doc,
-    })),
-  )
-
-  const sellerEntries = (workflowDocuments?.sellerDocuments || []).flatMap((sellerEntry) =>
-    (sellerEntry.documents || []).map((doc) => ({
-      ownerType: 'seller',
-      ownerIndex: sellerEntry.sellerNumber,
-      ...doc,
-    })),
-  )
-
-  const propertyEntries = (workflowDocuments?.propertyDocuments || []).map((doc) => ({
-    ownerType: 'property',
-    ownerIndex: 1,
-    ...doc,
-  }))
-
-  return [...buyerEntries, ...sellerEntries, ...propertyEntries]
-}
-
-function buildDocumentProcessingPayload(documents) {
-  return documents.map((doc) => ({
-    ownerType: doc.ownerType,
-    ownerIndex: doc.ownerIndex,
-    documentKey: doc.key,
-    documentCode: doc.code,
-    fileName: doc.fileName,
-    mimeType: doc.base64Data.split(';')[0].replace('data:', '') || 'application/octet-stream',
-    base64Data: doc.base64Data.includes(',') ? doc.base64Data.split(',')[1] : doc.base64Data,
-  }))
-}
-
-function createEmptyExtractedDocumentData(buyerCount, sellerCount) {
-  return {
-    partyInformation: {
-      buyers: Array.from({ length: buyerCount }, (_, index) => ({
-        buyerNumber: index + 1,
-        fullNames: '',
-        addresses: '',
-        age: '',
-        fathersName: '',
-        identificationNumbers: {
-          pan: '',
-          aadhaar: '',
-        },
-      })),
-      sellers: Array.from({ length: sellerCount }, (_, index) => ({
-        sellerNumber: index + 1,
-        fullNames: '',
-        addresses: '',
-        age: '',
-        fathersName: '',
-        identificationNumbers: {
-          pan: '',
-          aadhaar: '',
-        },
-      })),
-    },
-    propertyDescription: {
-      specificAddress: '',
-      surveyNumber: '',
-      plotNumber: '',
-      boundaries: '',
-      totalArea: '',
-      orientation: '',
-    },
-    financialTerms: {
-      agreedSalePrice: '',
-      paymentMode: '',
-      advanceAmount: '',
-      balancePending: '',
-    },
-    financialTermsExclude: {
-      agreedSalePrice: false,
-      paymentMode: false,
-      advanceAmount: false,
-      balancePending: false,
-    },
-    possessionAndTitle: {
-      possessionHandoverDate: '',
-      titleTransferDate: '',
-      indemnityOrWarrantyClauses: '',
-    },
-  }
-}
-
-function normalizeExtractedDocumentData(extractedData, buyerCount, sellerCount) {
-  const emptyData = createEmptyExtractedDocumentData(buyerCount, sellerCount)
-
-  return {
-    partyInformation: {
-      buyers: emptyData.partyInformation.buyers.map((defaultBuyer, index) => {
-        const sourceBuyer = extractedData?.partyInformation?.buyers?.[index]
-
-        return {
-          ...defaultBuyer,
-          ...sourceBuyer,
-          fullNames: Array.isArray(sourceBuyer?.fullNames)
-            ? sourceBuyer.fullNames.join(', ')
-            : (sourceBuyer?.fullNames || ''),
-          addresses: Array.isArray(sourceBuyer?.addresses)
-            ? sourceBuyer.addresses.join(', ')
-            : (sourceBuyer?.addresses || ''),
-          identificationNumbers: {
-            ...defaultBuyer.identificationNumbers,
-            ...(sourceBuyer?.identificationNumbers || {}),
-          },
-        }
-      }),
-      sellers: emptyData.partyInformation.sellers.map((defaultSeller, index) => {
-        const sourceSeller = extractedData?.partyInformation?.sellers?.[index]
-
-        return {
-          ...defaultSeller,
-          ...sourceSeller,
-          fullNames: Array.isArray(sourceSeller?.fullNames)
-            ? sourceSeller.fullNames.join(', ')
-            : (sourceSeller?.fullNames || ''),
-          addresses: Array.isArray(sourceSeller?.addresses)
-            ? sourceSeller.addresses.join(', ')
-            : (sourceSeller?.addresses || ''),
-          identificationNumbers: {
-            ...defaultSeller.identificationNumbers,
-            ...(sourceSeller?.identificationNumbers || {}),
-          },
-        }
-      }),
-    },
-    propertyDescription: {
-      ...emptyData.propertyDescription,
-      ...(extractedData?.propertyDescription || {}),
-    },
-    financialTerms: {
-      ...emptyData.financialTerms,
-      ...(extractedData?.financialTerms || {}),
-    },
-    financialTermsExclude: {
-      ...emptyData.financialTermsExclude,
-      ...(extractedData?.financialTermsExclude || {}),
-    },
-    possessionAndTitle: {
-      ...emptyData.possessionAndTitle,
-      ...(extractedData?.possessionAndTitle || {}),
-    },
-  }
-}
-
-function toStatementValue(value) {
-  return value || ''
-}
-
-function buildPdfDocumentFromText(documentText) {
-  const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const horizontalMargin = 48
-  const verticalMargin = 52
-  const lineHeight = 18
-
-  pdf.setFont('times', 'normal')
-  pdf.setFontSize(11)
-
-  const wrappedLines = pdf.splitTextToSize(documentText, pageWidth - horizontalMargin * 2)
-  let currentY = verticalMargin
-
-  wrappedLines.forEach((line, index) => {
-    if (index > 0 && currentY > pageHeight - verticalMargin) {
-      pdf.addPage()
-      currentY = verticalMargin
-    }
-
-    pdf.text(line, horizontalMargin, currentY)
-    currentY += lineHeight
-  })
-
-  return pdf
-}
-
-function buildMockExtractedDocumentData({ workflowBasicDetails }) {
-  const buyerCount = Number.parseInt(workflowBasicDetails.numberOfBuyers, 10) || 0
-  const sellerCount = Number.parseInt(workflowBasicDetails.numberOfSellers, 10) || 0
-
-  return createEmptyExtractedDocumentData(buyerCount, sellerCount)
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-    reader.onerror = () => reject(new Error('Failed to read uploaded file.'))
-    reader.readAsDataURL(file)
-  })
-}
-
-function isAllowedDocumentFile(file) {
-  const allowedMimeTypes = new Set([
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  ])
-  const lowerName = file.name.toLowerCase()
-
-  if (file.type.startsWith('image/')) {
-    return true
-  }
-
-  if (allowedMimeTypes.has(file.type)) {
-    return true
-  }
-
-  return (
-    lowerName.endsWith('.pdf') ||
-    lowerName.endsWith('.doc') ||
-    lowerName.endsWith('.docx')
-  )
-}
+import { recordProfileLoad, getStoredHistory } from './utils/historyUtils'
+import {
+  buildDocumentProcessingPayload,
+  buildMockExtractedDocumentData,
+  createInitialBasicDetails,
+  createInitialWorkflowDocuments,
+  getAllDocumentEntries,
+  isAllowedDocumentFile,
+  normalizeExtractedDocumentData,
+  normalizeWorkflowDocumentsForCounts,
+  readFileAsDataUrl,
+} from './utils/workflowUtils'
+import { buildPdfDocumentFromText, buildSaleDeedFileName } from './utils/pdfUtils'
+import { buildReviewDocumentText } from './utils/reviewDocumentUtils'
 
 function toWorkspacePath(workspaceName) {
   return `/${encodeURIComponent(workspaceName)}/`
@@ -948,39 +464,13 @@ function App() {
       buyerCount,
       sellerCount,
     )
-    const visibleFinancialTermEntries = [
-      ['Agreed sale price', normalizedExtractedData.financialTerms.agreedSalePrice, normalizedExtractedData.financialTermsExclude.agreedSalePrice],
-      ['Payment mode', normalizedExtractedData.financialTerms.paymentMode, normalizedExtractedData.financialTermsExclude.paymentMode],
-      ['Advance amount', normalizedExtractedData.financialTerms.advanceAmount, normalizedExtractedData.financialTermsExclude.advanceAmount],
-      ['Balance pending', normalizedExtractedData.financialTerms.balancePending, normalizedExtractedData.financialTermsExclude.balancePending],
-    ].filter(([, , excluded]) => !excluded)
-    const buyerStatements = normalizedExtractedData.partyInformation.buyers.map(
-      (buyer) =>
-        `Buyer ${buyer.buyerNumber}: Full names ${toStatementValue(buyer.fullNames)}. Addresses ${toStatementValue(buyer.addresses)}. Age ${toStatementValue(buyer.age)}. Father's name ${toStatementValue(buyer.fathersName)}. PAN ${toStatementValue(buyer.identificationNumbers.pan)}. Aadhaar ${toStatementValue(buyer.identificationNumbers.aadhaar)}.`,
-    )
-    const sellerStatements = normalizedExtractedData.partyInformation.sellers.map(
-      (seller) =>
-        `Seller ${seller.sellerNumber}: Full names ${toStatementValue(seller.fullNames)}. Addresses ${toStatementValue(seller.addresses)}. Age ${toStatementValue(seller.age)}. Father's name ${toStatementValue(seller.fathersName)}. PAN ${toStatementValue(seller.identificationNumbers.pan)}. Aadhaar ${toStatementValue(seller.identificationNumbers.aadhaar)}.`,
-    )
-    const financialStatement = visibleFinancialTermEntries.length === 0
-      ? 'Financial Terms: '
-      : `Financial Terms: ${visibleFinancialTermEntries
-          .map(([label, value]) => `${label} ${toStatementValue(value)}`)
-          .join('. ')}.`
     const generatedAt = new Date().toLocaleString()
-    const reviewText = [
-      `Workspace Review Document`,
-      `Generated At: ${generatedAt}`,
-      `Workspace: ${activeWorkspace.name}`,
-      `User: ${currentUser}`,
-      '',
-      'Review Final Details',
-      ...buyerStatements,
-      ...sellerStatements,
-      `Property Description: Specific address ${toStatementValue(normalizedExtractedData.propertyDescription.specificAddress)}. Survey number ${toStatementValue(normalizedExtractedData.propertyDescription.surveyNumber)}. Plot number ${toStatementValue(normalizedExtractedData.propertyDescription.plotNumber)}. Boundaries ${toStatementValue(normalizedExtractedData.propertyDescription.boundaries)}. Total area ${toStatementValue(normalizedExtractedData.propertyDescription.totalArea)}. Orientation of the property ${toStatementValue(normalizedExtractedData.propertyDescription.orientation)}.`,
-      financialStatement,
-      `Possession and Title: Date of possession handover ${toStatementValue(normalizedExtractedData.possessionAndTitle.possessionHandoverDate)}. Date of transfer of title ${toStatementValue(normalizedExtractedData.possessionAndTitle.titleTransferDate)}. Specific indemnity or warranty clauses regarding encumbrances ${toStatementValue(normalizedExtractedData.possessionAndTitle.indemnityOrWarrantyClauses)}.`,
-    ].join('\n')
+      const reviewText = buildReviewDocumentText({
+        workspaceName: activeWorkspace.name,
+        currentUser,
+        generatedAt,
+        normalizedExtractedData,
+      })
 
     setGeneratedReviewDocument(reviewText)
     setWorkflowError('')
@@ -998,13 +488,7 @@ function App() {
     const pdfBlob = pdfDocument.output('blob')
     const objectUrl = window.URL.createObjectURL(pdfBlob)
     const anchor = document.createElement('a')
-    const timestamp = new Date()
-    const pad2 = (value) => String(value).padStart(2, '0')
-    const downloadFileName = `SALE_DEED_${activeWorkspace?.name || 'workspace'}_${timestamp.getFullYear()}${pad2(
-      timestamp.getMonth() + 1,
-    )}${pad2(timestamp.getDate())}${pad2(timestamp.getHours())}${pad2(
-      timestamp.getMinutes(),
-    )}${pad2(timestamp.getSeconds())}.pdf`
+    const downloadFileName = buildSaleDeedFileName(activeWorkspace?.name || 'workspace')
 
     // Future S3 upload hook:
     // await uploadGeneratedReviewPdf({
@@ -1249,7 +733,6 @@ function App() {
       if (action === 'submit' && !hasFailure) {
         const mockedExtractionResponse = buildMockExtractedDocumentData({
           workflowBasicDetails,
-          documents: readyDocuments,
         })
 
         const parsedResponse = {
