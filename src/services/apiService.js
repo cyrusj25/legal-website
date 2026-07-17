@@ -1,18 +1,10 @@
-const DEFAULT_API_BASE_URL = 'https://example.execute-api.us-east-1.amazonaws.com/prod'
-const WORKSPACE_STORE_KEY = 'workspace-store-v1'
-const WORKSPACE_HISTORY_KEY = 'workspace-history-v1'
+import { getIdToken } from './authService'
 
-const DEFAULT_REQUEST_CONTEXT = {
-  intKey: 108039,
-  userId: 'cyrusj25',
-  domain: 'BLORE LLC',
-  ip: '10.103.1027.544',
-  loginTimestamp: '2026-07-05 15:44:45.101021 UTC',
-  captureInput: null,
-  profilemetadata: {
-    workspaceName: 'customer1',
-    workSpacefor: 'sded',
-  },
+const DEFAULT_API_BASE_URL = 'https://example.execute-api.us-east-1.amazonaws.com/prod'
+
+const PROFILE_ENDPOINTS = {
+  get: '/profile',
+  loginHistory: '/profile/login-history',
 }
 
 const WORKSPACE_ENDPOINTS = {
@@ -25,56 +17,33 @@ const WORKSPACE_ENDPOINTS = {
 
 const DOCUMENT_ENDPOINTS = {
   upload: '/workspace/documents/upload',
+  extract: '/workspace/documents/extract',
   uploadReviewPdf: '/workspace/documents/upload-review-pdf',
+}
+
+function getWorkflowEndpoint(workspaceName) {
+  return `/workspaces/${encodeURIComponent(workspaceName)}/workflow`
+}
+
+function getReviewDocumentEndpoint(workspaceName) {
+  return `/workspaces/${encodeURIComponent(workspaceName)}/review-document`
 }
 
 function getApiBaseUrl() {
   return import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL
 }
 
-function toStandardPayload({
-  userId,
-  workspaceName,
-  workspaceFor,
-  captureInput,
-  authContext,
-  dataOverrides,
-}) {
-  const resolvedUserId =
-    userId || authContext?.userId || DEFAULT_REQUEST_CONTEXT.userId
-  const resolvedDomain =
-    authContext?.domain || dataOverrides?.domain || DEFAULT_REQUEST_CONTEXT.domain
-  const resolvedIp =
-    authContext?.ip || dataOverrides?.ip || DEFAULT_REQUEST_CONTEXT.ip
-  const resolvedLoginTimestamp =
-    authContext?.loginTimestamp ||
-    dataOverrides?.loginTimestamp ||
-    DEFAULT_REQUEST_CONTEXT.loginTimestamp
-
+function buildRequestPayload({ userId, workspaceName, workspaceFor, captureInput, authContext }) {
   return {
     data: {
-      ...DEFAULT_REQUEST_CONTEXT,
-      ...dataOverrides,
-      userId: resolvedUserId,
-      domain: resolvedDomain,
-      ip: resolvedIp,
-      loginTimestamp: resolvedLoginTimestamp,
-      captureInput:
-        captureInput === undefined
-          ? DEFAULT_REQUEST_CONTEXT.captureInput
-          : captureInput,
+      userId: userId || authContext?.userId || '',
+      companyCode: authContext?.companyCode || '',
+      loginTimestamp: authContext?.loginTimestamp || new Date().toISOString(),
       profilemetadata: {
-        ...DEFAULT_REQUEST_CONTEXT.profilemetadata,
-        ...(dataOverrides?.profilemetadata || {}),
-        workspaceName:
-          workspaceName ||
-          dataOverrides?.profilemetadata?.workspaceName ||
-          DEFAULT_REQUEST_CONTEXT.profilemetadata.workspaceName,
-        workSpacefor:
-          workspaceFor ||
-          dataOverrides?.profilemetadata?.workSpacefor ||
-          DEFAULT_REQUEST_CONTEXT.profilemetadata.workSpacefor,
+        workspaceName: workspaceName || '',
+        workSpacefor: workspaceFor || '',
       },
+      captureInput: captureInput === undefined ? null : captureInput,
     },
   }
 }
@@ -83,56 +52,26 @@ function getPayloadSegments(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return {
       captureInput: payload === undefined ? null : payload,
-      dataOverrides: {},
-      workspaceName: undefined,
       workspaceFor: undefined,
     }
   }
 
-  if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+  if (payload.captureInput !== undefined) {
     return {
-      captureInput:
-        payload.data.captureInput === undefined ? null : payload.data.captureInput,
-      dataOverrides: payload.data,
-      workspaceName: payload.data.profilemetadata?.workspaceName,
-      workspaceFor: payload.data.profilemetadata?.workSpacefor,
+      captureInput: payload.captureInput,
+      workspaceFor: payload.workspaceFor,
     }
   }
 
   return {
-    captureInput: payload.captureInput === undefined ? payload : payload.captureInput,
-    dataOverrides: payload,
-    workspaceName: payload.profilemetadata?.workspaceName,
-    workspaceFor: payload.profilemetadata?.workSpacefor,
+    captureInput: payload,
+    workspaceFor: payload.workspaceFor,
   }
 }
 
-function readJsonStorage(key, fallbackValue) {
-  const value = localStorage.getItem(key)
-
-  if (!value) {
-    return fallbackValue
-  }
-
-  try {
-    return JSON.parse(value)
-  } catch {
-    return fallbackValue
-  }
-}
-
-function writeJsonStorage(key, value) {
-  localStorage.setItem(key, JSON.stringify(value))
-}
-
-function getWorkspaceStore() {
-  return readJsonStorage(WORKSPACE_STORE_KEY, {})
-}
-
-function getWorkspaceHistoryStore() {
-  return readJsonStorage(WORKSPACE_HISTORY_KEY, {})
-}
-
+// Every call is authenticated with the signed-in Cognito user's ID token so
+// the API Gateway Cognito authorizer can validate the request before it
+// reaches the backing Lambda function.
 export async function callApi({
   method,
   endpoint,
@@ -143,13 +82,12 @@ export async function callApi({
 }) {
   const normalizedPath = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
   const payloadSegments = getPayloadSegments(payload)
-  const requestPayload = toStandardPayload({
+  const requestPayload = buildRequestPayload({
     userId,
     workspaceName,
     workspaceFor: payloadSegments.workspaceFor,
     captureInput: payloadSegments.captureInput,
     authContext,
-    dataOverrides: payloadSegments.dataOverrides,
   })
   const baseUrl = `${getApiBaseUrl()}${normalizedPath}`
   const url =
@@ -159,10 +97,13 @@ export async function callApi({
         )}`
       : baseUrl
 
+  const idToken = await getIdToken()
+
   const response = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
     },
     body:
       method === 'GET' || method === 'DELETE'
@@ -183,144 +124,196 @@ export async function callApi({
   }
 }
 
-export async function checkWorkspaceExists(userId, workspaceName) {
-  // TODO: Replace this local mock with a real backend call when endpoint is ready.
-  // Example integration:
-  // return callApi({
-  //   method: 'POST',
-  //   endpoint: WORKSPACE_ENDPOINTS.checkExists,
-  //   userId,
-  //   workspaceName,
-  //   payload: { captureInput: { operation: 'checkWorkspaceExists' } },
-  // })
-  const store = getWorkspaceStore()
-  const userWorkspaces = Array.isArray(store[userId]) ? store[userId] : []
-  const exists = userWorkspaces.some(
-    (workspace) => workspace.name.toLowerCase() === workspaceName.toLowerCase(),
-  )
+// ---- Profile ----
+
+export async function getProfile(userId, authContext) {
+  const response = await callApi({
+    method: 'GET',
+    endpoint: PROFILE_ENDPOINTS.get,
+    userId,
+    authContext,
+  })
 
   return {
-    exists,
+    profile: response.data?.profile || null,
+    endpoint: PROFILE_ENDPOINTS.get,
+  }
+}
+
+export async function recordLoginHistory(userId, authContext) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: PROFILE_ENDPOINTS.loginHistory,
+    userId,
+    authContext,
+    payload: { captureInput: { operation: 'recordLoginHistory' } },
+  })
+
+  return {
+    history: Array.isArray(response.data?.history) ? response.data.history : [],
+    endpoint: PROFILE_ENDPOINTS.loginHistory,
+  }
+}
+
+export async function listLoginHistory(userId, authContext) {
+  const response = await callApi({
+    method: 'GET',
+    endpoint: PROFILE_ENDPOINTS.loginHistory,
+    userId,
+    authContext,
+  })
+
+  return {
+    history: Array.isArray(response.data?.history) ? response.data.history : [],
+    endpoint: PROFILE_ENDPOINTS.loginHistory,
+  }
+}
+
+// ---- Workspaces ----
+
+export async function checkWorkspaceExists(userId, workspaceName, authContext) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: WORKSPACE_ENDPOINTS.checkExists,
+    userId,
+    workspaceName,
+    authContext,
+    payload: { captureInput: { operation: 'checkWorkspaceExists' } },
+  })
+
+  return {
+    exists: Boolean(response.data?.exists),
     endpoint: WORKSPACE_ENDPOINTS.checkExists,
   }
 }
 
-export async function createWorkspace(userId, workspaceName) {
-  // TODO: Replace this local mock with a real backend call when endpoint is ready.
-  // Example integration:
-  // return callApi({
-  //   method: 'POST',
-  //   endpoint: WORKSPACE_ENDPOINTS.create,
-  //   userId,
-  //   workspaceName,
-  //   payload: { captureInput: { operation: 'createWorkspace' } },
-  // })
-  const store = getWorkspaceStore()
-  const userWorkspaces = Array.isArray(store[userId]) ? store[userId] : []
-  const newWorkspace = {
-    id: `${workspaceName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
-    name: workspaceName,
-    createdAt: new Date().toISOString(),
-    lastOpenedAt: new Date().toISOString(),
-  }
-
-  store[userId] = [newWorkspace, ...userWorkspaces]
-  writeJsonStorage(WORKSPACE_STORE_KEY, store)
+export async function createWorkspace(userId, workspaceName, authContext) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: WORKSPACE_ENDPOINTS.create,
+    userId,
+    workspaceName,
+    authContext,
+    payload: { captureInput: { operation: 'createWorkspace' } },
+  })
 
   return {
-    workspace: newWorkspace,
+    workspace: response.data?.workspace || null,
     endpoint: WORKSPACE_ENDPOINTS.create,
   }
 }
 
-export async function listUserWorkspaces(userId) {
-  // TODO: Replace this local mock with a real backend call when endpoint is ready.
-  // Example integration:
-  // return callApi({ method: 'GET', endpoint: `${WORKSPACE_ENDPOINTS.list}?userId=${encodeURIComponent(userId)}`, userId })
-  const store = getWorkspaceStore()
-  const workspaces = Array.isArray(store[userId]) ? store[userId] : []
+export async function listUserWorkspaces(userId, authContext) {
+  const response = await callApi({
+    method: 'GET',
+    endpoint: WORKSPACE_ENDPOINTS.list,
+    userId,
+    authContext,
+  })
 
   return {
-    workspaces,
+    workspaces: Array.isArray(response.data?.workspaces) ? response.data.workspaces : [],
     endpoint: WORKSPACE_ENDPOINTS.list,
   }
 }
 
-export async function openWorkspace(userId, workspaceName) {
-  // TODO: Replace this local mock with a real backend call when endpoint is ready.
-  // Example integration:
-  // return callApi({
-  //   method: 'POST',
-  //   endpoint: WORKSPACE_ENDPOINTS.open,
-  //   userId,
-  //   workspaceName,
-  //   payload: { captureInput: { operation: 'openWorkspace' } },
-  // })
-  const store = getWorkspaceStore()
-  const userWorkspaces = Array.isArray(store[userId]) ? store[userId] : []
-
-  const updated = userWorkspaces.map((workspace) => {
-    if (workspace.name.toLowerCase() !== workspaceName.toLowerCase()) {
-      return workspace
-    }
-
-    return {
-      ...workspace,
-      lastOpenedAt: new Date().toISOString(),
-    }
+export async function openWorkspace(userId, workspaceName, authContext) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: WORKSPACE_ENDPOINTS.open,
+    userId,
+    workspaceName,
+    authContext,
+    payload: { captureInput: { operation: 'openWorkspace' } },
   })
 
-  store[userId] = updated
-  writeJsonStorage(WORKSPACE_STORE_KEY, store)
-
-  const activeWorkspace = updated.find(
-    (workspace) => workspace.name.toLowerCase() === workspaceName.toLowerCase(),
-  )
-
   return {
-    workspace: activeWorkspace || null,
+    workspace: response.data?.workspace || null,
     endpoint: WORKSPACE_ENDPOINTS.open,
   }
 }
 
-export async function addWorkspaceHistory(userId, workspaceName, action) {
-  // TODO: Replace this local mock with a real backend call when endpoint is ready.
-  // Example integration:
-  // return callApi({
-  //   method: 'POST',
-  //   endpoint: WORKSPACE_ENDPOINTS.history,
-  //   userId,
-  //   workspaceName,
-  //   payload: { captureInput: { operation: 'addWorkspaceHistory', action } },
-  // })
-  const historyStore = getWorkspaceHistoryStore()
-  const userHistory = Array.isArray(historyStore[userId]) ? historyStore[userId] : []
-  const entry = {
+export async function addWorkspaceHistory(userId, workspaceName, action, authContext) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: WORKSPACE_ENDPOINTS.history,
+    userId,
     workspaceName,
-    action,
-    at: new Date().toISOString(),
-  }
-
-  historyStore[userId] = [entry, ...userHistory].slice(0, 40)
-  writeJsonStorage(WORKSPACE_HISTORY_KEY, historyStore)
+    authContext,
+    payload: { captureInput: { operation: 'addWorkspaceHistory', action } },
+  })
 
   return {
-    history: historyStore[userId],
+    history: Array.isArray(response.data?.history) ? response.data.history : [],
     endpoint: WORKSPACE_ENDPOINTS.history,
   }
 }
 
-export async function listWorkspaceHistory(userId) {
-  // TODO: Replace this local mock with a real backend call when endpoint is ready.
-  // Example integration:
-  // return callApi({ method: 'GET', endpoint: `${WORKSPACE_ENDPOINTS.history}?userId=${encodeURIComponent(userId)}`, userId })
-  const historyStore = getWorkspaceHistoryStore()
+export async function listWorkspaceHistory(userId, authContext) {
+  const response = await callApi({
+    method: 'GET',
+    endpoint: WORKSPACE_ENDPOINTS.history,
+    userId,
+    authContext,
+  })
 
   return {
-    history: Array.isArray(historyStore[userId]) ? historyStore[userId] : [],
+    history: Array.isArray(response.data?.history) ? response.data.history : [],
     endpoint: WORKSPACE_ENDPOINTS.history,
   }
 }
+
+// ---- Workflow progress ----
+
+export async function getWorkflowProgress(userId, workspaceName, authContext) {
+  const response = await callApi({
+    method: 'GET',
+    endpoint: getWorkflowEndpoint(workspaceName),
+    userId,
+    workspaceName,
+    authContext,
+  })
+
+  return {
+    progress: response.data?.progress || null,
+    endpoint: getWorkflowEndpoint(workspaceName),
+  }
+}
+
+export async function saveWorkflowProgress({
+  userId,
+  workspaceName,
+  authContext,
+  stepIndex,
+  basicDetails,
+  documents,
+  parsedDocumentResponse,
+  generatedReviewDocument,
+}) {
+  const response = await callApi({
+    method: 'PUT',
+    endpoint: getWorkflowEndpoint(workspaceName),
+    userId,
+    workspaceName,
+    authContext,
+    payload: {
+      captureInput: {
+        stepIndex,
+        basicDetails,
+        documents,
+        parsedDocumentResponse,
+        generatedReviewDocument,
+      },
+    },
+  })
+
+  return {
+    updatedAt: response.data?.updatedAt || new Date().toISOString(),
+    endpoint: getWorkflowEndpoint(workspaceName),
+  }
+}
+
+// ---- Documents ----
 
 export async function uploadWorkspaceDocument({
   userId,
@@ -328,22 +321,9 @@ export async function uploadWorkspaceDocument({
   authContext,
   description,
   imageUrl,
-  jwt,
   dataType,
   dataTypeCode,
 }) {
-  // TODO: Replace or extend this endpoint when backend contract is finalized.
-  // Example request payload sent to backend:
-  // {
-  //   data: {
-  //     intKey,
-  //     userId,
-  //     domain,
-  //     ip,
-  //     loginTimestamp,
-  //     captureInput: { description, imageUrl, jwt, dataType, dataTypeCode }
-  //   }
-  // }
   return callApi({
     method: 'POST',
     endpoint: DOCUMENT_ENDPOINTS.upload,
@@ -354,12 +334,27 @@ export async function uploadWorkspaceDocument({
       captureInput: {
         description,
         imageUrl,
-        jwt,
         dataType,
         dataTypeCode,
       },
     },
   })
+}
+
+export async function extractWorkspaceDocuments({ userId, workspaceName, authContext, documents }) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: DOCUMENT_ENDPOINTS.extract,
+    userId,
+    workspaceName,
+    authContext,
+    payload: { captureInput: { documents } },
+  })
+
+  return {
+    extractedData: response.data?.extractedData || null,
+    endpoint: DOCUMENT_ENDPOINTS.extract,
+  }
 }
 
 export async function uploadGeneratedReviewPdf({
@@ -382,4 +377,20 @@ export async function uploadGeneratedReviewPdf({
       },
     },
   })
+}
+
+export async function saveReviewDocument({ userId, workspaceName, authContext, reviewDocumentText }) {
+  const response = await callApi({
+    method: 'POST',
+    endpoint: getReviewDocumentEndpoint(workspaceName),
+    userId,
+    workspaceName,
+    authContext,
+    payload: { captureInput: { reviewDocumentText } },
+  })
+
+  return {
+    savedAt: response.data?.savedAt || new Date().toISOString(),
+    endpoint: getReviewDocumentEndpoint(workspaceName),
+  }
 }

@@ -1,23 +1,4 @@
-export const HARDCODED_CREDENTIALS = {
-  userId: 'cyrusj25',
-  password: 'Data@1234567',
-  companyCode: 'DEEDLY',
-}
-
-export const PROFILE_DIRECTORY = {
-  cyrusj25: {
-    fullName: 'Cyrus Johnson',
-    role: 'Portal Administrator',
-    email: 'cyrus.johnson@example.com',
-    domain: 'BLORE LLC',
-    region: 'us-east-1',
-    lastLogin: '2026-07-12T21:00:00Z',
-  },
-}
-
-export const HISTORY_STORAGE_KEY = 'profile-load-history'
 export const UI_THEME_STORAGE_KEY = 'ui-theme'
-export const WORKFLOW_STORAGE_KEY = 'workspace-workflow-v1'
 
 export const BUYER_DOCUMENT_DEFINITIONS = [
   { key: 'Doc1', code: 'BA01' },

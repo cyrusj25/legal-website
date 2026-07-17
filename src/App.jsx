@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
@@ -7,29 +7,41 @@ import ProfileSettingsPage from './pages/ProfileSettingsPage'
 import SignupPage from './pages/SignupPage'
 import WorkspaceDocumentsPage from './pages/WorkspaceDocumentsPage'
 import {
-  HARDCODED_CREDENTIALS,
   HOME_INITIATIVES,
   HOME_LATEST_UPDATES,
   HOME_SPOTLIGHT_ITEMS,
-  PROFILE_DIRECTORY,
   SETTINGS_TABS,
   UI_THEME_STORAGE_KEY,
   WORKFLOW_STEPS,
-  WORKFLOW_STORAGE_KEY,
 } from './config/appConfig'
 import {
   addWorkspaceHistory,
   checkWorkspaceExists,
   createWorkspace,
+  extractWorkspaceDocuments,
+  getProfile,
+  getWorkflowProgress,
+  listLoginHistory,
   listUserWorkspaces,
   listWorkspaceHistory,
   openWorkspace,
+  recordLoginHistory,
+  saveReviewDocument,
+  saveWorkflowProgress,
+  uploadGeneratedReviewPdf,
   uploadWorkspaceDocument,
 } from './services/apiService'
-import { recordProfileLoad, getStoredHistory } from './utils/historyUtils'
+import {
+  changeCognitoPassword,
+  confirmSignUpWithCognito,
+  getAuthenticatedUserContext,
+  restoreAuthSession,
+  signInWithCognito,
+  signOutFromCognito,
+  signUpWithCognito,
+} from './services/authService'
 import {
   buildDocumentProcessingPayload,
-  buildMockExtractedDocumentData,
   createInitialBasicDetails,
   createInitialWorkflowDocuments,
   getAllDocumentEntries,
@@ -74,35 +86,27 @@ function formatLoginTimestamp(date) {
   )}.${pad3(date.getUTCMilliseconds())} UTC`
 }
 
-function getWorkflowStore() {
-  const rawValue = localStorage.getItem(WORKFLOW_STORAGE_KEY)
-
-  if (!rawValue) {
-    return {}
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue)
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveWorkflowStore(store) {
-  localStorage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(store))
-}
-
 function App() {
   const [page, setPage] = useState('home')
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
-  const [companyCode, setCompanyCode] = useState(HARDCODED_CREDENTIALS.companyCode)
+  const [companyCode, setCompanyCode] = useState('')
   const [currentUser, setCurrentUser] = useState(null)
   const [authContext, setAuthContext] = useState(null)
   const [authError, setAuthError] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
+  const [profile, setProfile] = useState(null)
+  const [signupStep, setSignupStep] = useState('request')
+  const [signupUserId, setSignupUserId] = useState('')
+  const [signupEmail, setSignupEmail] = useState('')
+  const [signupCompanyCode, setSignupCompanyCode] = useState('')
+  const [signupPassword, setSignupPassword] = useState('')
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState('')
+  const [signupConfirmationCode, setSignupConfirmationCode] = useState('')
   const [signupRequestMessage, setSignupRequestMessage] = useState('')
-  const [history, setHistory] = useState(() => getStoredHistory())
+  const [signupError, setSignupError] = useState('')
+  const [signupLoading, setSignupLoading] = useState(false)
+  const [history, setHistory] = useState([])
 
   const [workspaceName, setWorkspaceName] = useState('')
   const [workspaceList, setWorkspaceList] = useState([])
@@ -135,6 +139,7 @@ function App() {
   const [passwordChangeError, setPasswordChangeError] = useState('')
   const [activeSettingsTab, setActiveSettingsTab] = useState(SETTINGS_TABS[0].id)
   const [theme] = useState('light')
+  const [authChecking, setAuthChecking] = useState(true)
 
   useEffect(() => {
     localStorage.setItem(UI_THEME_STORAGE_KEY, theme)
@@ -146,49 +151,157 @@ function App() {
     }
   }, [page])
 
-  const profile = useMemo(() => {
-    if (!currentUser) {
-      return null
+  // A SPA keeps a single document alive across reloads/back-forward
+  // navigation, so Cognito's persisted session (not a fresh login) is the
+  // source of truth for auth state on mount.
+  useEffect(() => {
+    let isMounted = true
+
+    const restoreSession = async () => {
+      const authenticatedUser = await restoreAuthSession()
+
+      if (!authenticatedUser || !isMounted) {
+        if (isMounted) {
+          setAuthChecking(false)
+        }
+        return
+      }
+
+      const nextAuthContext = {
+        userId: authenticatedUser.userId,
+        companyCode: authenticatedUser.companyCode,
+        email: authenticatedUser.email,
+        loginTimestamp: formatLoginTimestamp(new Date()),
+      }
+
+      setCurrentUser(authenticatedUser.userId)
+      setAuthContext(nextAuthContext)
+
+      try {
+        const [profileResult, loginHistoryResult] = await Promise.all([
+          getProfile(authenticatedUser.userId, nextAuthContext),
+          listLoginHistory(authenticatedUser.userId, nextAuthContext),
+        ])
+
+        if (!isMounted) {
+          return
+        }
+
+        setProfile(profileResult.profile)
+        setHistory(loginHistoryResult.history)
+        void loadWorkspaceContext(authenticatedUser.userId, nextAuthContext)
+        setPage('profile')
+        navigateToPath(toProfilePath(authenticatedUser.userId))
+      } finally {
+        if (isMounted) {
+          setAuthChecking(false)
+        }
+      }
     }
 
-    return PROFILE_DIRECTORY[currentUser] || null
+    restoreSession()
+
+    return () => {
+      isMounted = false
+    }
+    // Runs once on mount only; loadWorkspaceContext is intentionally excluded
+    // since it is redefined every render and this effect must not re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Supports the browser's back/forward buttons, which a client-rendered
+  // SPA must handle itself since there is no server round trip per page.
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname
+
+      if (path === toHomePath()) {
+        setPage('home')
+        return
+      }
+
+      if (!currentUser) {
+        if (path === '/') {
+          setPage('login')
+        }
+        return
+      }
+
+      if (path === toProfileSettingsPath(currentUser)) {
+        setPage('profile-settings')
+        return
+      }
+
+      if (path === toProfilePath(currentUser)) {
+        setPage('profile')
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+    }
   }, [currentUser])
 
-  const handleSignIn = (event) => {
+  const handleSignIn = async (event) => {
     event.preventDefault()
     setAuthError('')
+    setAuthLoading(true)
 
-    if (
-      userId === HARDCODED_CREDENTIALS.userId &&
-      password === HARDCODED_CREDENTIALS.password &&
-      companyCode === HARDCODED_CREDENTIALS.companyCode
-    ) {
+    try {
+      const signInResult = await signInWithCognito(userId, password)
+
+      if (!signInResult?.isSignedIn) {
+        setAuthError('Sign-in requires additional verification steps that are not yet supported.')
+        return
+      }
+
+      const authenticatedUser = await getAuthenticatedUserContext()
+
+      if (
+        companyCode &&
+        authenticatedUser.companyCode &&
+        companyCode !== authenticatedUser.companyCode
+      ) {
+        await signOutFromCognito()
+        setAuthError('Company code does not match this account.')
+        return
+      }
+
       const signInTimestamp = new Date()
-      const profileForUser = PROFILE_DIRECTORY[userId] || {}
-
-      setCurrentUser(userId)
-      setAuthContext({
-        userId,
-        domain: profileForUser.domain || 'BLORE LLC',
-        ip: profileForUser.ip || '10.103.1027.544',
+      const nextAuthContext = {
+        userId: authenticatedUser.userId,
+        companyCode: authenticatedUser.companyCode || companyCode,
+        email: authenticatedUser.email,
         loginTimestamp: formatLoginTimestamp(signInTimestamp),
-      })
-      const updatedHistory = recordProfileLoad(userId)
-      setHistory(updatedHistory)
-      void loadWorkspaceContext(userId)
-      navigateToPath(toProfilePath(userId))
+      }
+
+      setCurrentUser(authenticatedUser.userId)
+      setAuthContext(nextAuthContext)
+
+      const [profileResult, loginHistoryResult] = await Promise.all([
+        getProfile(authenticatedUser.userId, nextAuthContext),
+        recordLoginHistory(authenticatedUser.userId, nextAuthContext),
+      ])
+
+      setProfile(profileResult.profile)
+      setHistory(loginHistoryResult.history)
+      void loadWorkspaceContext(authenticatedUser.userId, nextAuthContext)
+      navigateToPath(toProfilePath(authenticatedUser.userId))
       setPage('profile')
       setPassword('')
-      return
+    } catch {
+      setAuthError('Invalid credentials. Use a registered user ID, password, and company code.')
+    } finally {
+      setAuthLoading(false)
     }
-
-    setAuthError('Invalid credentials. Use the provided user ID, password, and company code.')
   }
 
-  const loadWorkspaceContext = async (signedInUserId) => {
+  const loadWorkspaceContext = async (signedInUserId, signedInAuthContext = authContext) => {
     const [workspaceResult, workspaceHistoryResult] = await Promise.all([
-      listUserWorkspaces(signedInUserId),
-      listWorkspaceHistory(signedInUserId),
+      listUserWorkspaces(signedInUserId, signedInAuthContext),
+      listWorkspaceHistory(signedInUserId, signedInAuthContext),
     ])
 
     setWorkspaceList(workspaceResult.workspaces)
@@ -199,7 +312,7 @@ function App() {
     }
   }
 
-  const persistWorkflowProgress = ({
+  const persistWorkflowProgress = async ({
     stepIndex = workflowStepIndex,
     basicDetails = workflowBasicDetails,
     documents = workspaceDocuments,
@@ -211,34 +324,33 @@ function App() {
       return
     }
 
-    const workflowStore = getWorkflowStore()
-    const existingUserStore = workflowStore[currentUser] || {}
-    const updatedAt = new Date().toISOString()
-
-    workflowStore[currentUser] = {
-      ...existingUserStore,
-      [activeWorkspace.name]: {
+    try {
+      const saveResult = await saveWorkflowProgress({
+        userId: currentUser,
+        workspaceName: activeWorkspace.name,
+        authContext,
         stepIndex,
         basicDetails,
         documents,
         parsedDocumentResponse: parsedResponse,
         generatedReviewDocument: generatedDocument,
-        updatedAt,
-      },
-    }
+      })
 
-    saveWorkflowStore(workflowStore)
-
-    if (showMessage) {
-      setWorkflowSaveMessage(
-        `Workspace progress saved at ${new Date(updatedAt).toLocaleString()}.`,
-      )
+      if (showMessage) {
+        setWorkflowSaveMessage(
+          `Workspace progress saved at ${new Date(saveResult.updatedAt).toLocaleString()}.`,
+        )
+      }
+    } catch {
+      if (showMessage) {
+        setWorkflowError('Unable to save workspace progress. Please try again.')
+      }
     }
   }
 
-  const loadWorkflowProgress = (signedInUserId, workspaceNameValue) => {
-    const workflowStore = getWorkflowStore()
-    const savedProgress = workflowStore?.[signedInUserId]?.[workspaceNameValue]
+  const loadWorkflowProgress = async (signedInUserId, workspaceNameValue) => {
+    const progressResult = await getWorkflowProgress(signedInUserId, workspaceNameValue, authContext)
+    const savedProgress = progressResult.progress
 
     if (!savedProgress) {
       setWorkflowStepIndex(0)
@@ -294,9 +406,9 @@ function App() {
     )
   }
 
-  const handleSaveWorkflowProgress = () => {
+  const handleSaveWorkflowProgress = async () => {
     setWorkflowError('')
-    persistWorkflowProgress({ showMessage: true })
+    await persistWorkflowProgress({ showMessage: true })
   }
 
   const handleParsedDocumentResponseChange = (nextExtractedData) => {
@@ -478,7 +590,7 @@ function App() {
     persistWorkflowProgress({ generatedDocument: reviewText })
   }
 
-  const handleDownloadReviewDocument = () => {
+  const handleDownloadReviewDocument = async () => {
     if (!generatedReviewDocument.trim()) {
       setWorkflowError('Generate a review document before downloading.')
       return
@@ -486,18 +598,29 @@ function App() {
 
     const pdfDocument = buildPdfDocumentFromText(generatedReviewDocument)
     const pdfBlob = pdfDocument.output('blob')
+    const pdfBase64 = pdfDocument.output('datauristring')
     const objectUrl = window.URL.createObjectURL(pdfBlob)
     const anchor = document.createElement('a')
     const downloadFileName = buildSaleDeedFileName(activeWorkspace?.name || 'workspace')
 
-    // Future S3 upload hook:
-    // await uploadGeneratedReviewPdf({
-    //   userId: currentUser,
-    //   workspaceName: activeWorkspace?.name,
-    //   authContext,
-    //   fileName: downloadFileName,
-    //   pdfBlob,
-    // })
+    try {
+      await saveReviewDocument({
+        userId: currentUser,
+        workspaceName: activeWorkspace?.name,
+        authContext,
+        reviewDocumentText: generatedReviewDocument,
+      })
+      await uploadGeneratedReviewPdf({
+        userId: currentUser,
+        workspaceName: activeWorkspace?.name,
+        authContext,
+        fileName: downloadFileName,
+        pdfBase64,
+      })
+      setWorkflowError('')
+    } catch {
+      setWorkflowError('Review document generated locally, but the backend copy failed to save.')
+    }
 
     anchor.href = objectUrl
     anchor.download = downloadFileName
@@ -505,7 +628,6 @@ function App() {
     anchor.click()
     document.body.removeChild(anchor)
     window.URL.revokeObjectURL(objectUrl)
-    setWorkflowError('')
   }
 
   const handleDocumentFileChange = async (sectionType, ownerNumber, documentKey, event) => {
@@ -627,21 +749,6 @@ function App() {
     try {
       const processingPayload = buildDocumentProcessingPayload(readyDocuments)
 
-      // Backend integration scaffold for document extraction. Keep this commented
-      // until the client GET endpoint contract is finalized.
-      // const extractionResponse = await Promise.all(
-      //   processingPayload.map((payloadItem) =>
-      //     callApi({
-      //       method: 'GET',
-      //       endpoint: '/document-processing/extract',
-      //       payload: { captureInput: payloadItem },
-      //       userId: currentUser,
-      //       workspaceName: activeWorkspace.name,
-      //       authContext,
-      //     }),
-      //   ),
-      // )
-
       const uploadResults = await Promise.all(
         readyDocuments.map((doc) =>
           uploadWorkspaceDocument({
@@ -655,7 +762,6 @@ function App() {
                   ? `Seller ${doc.ownerIndex} ${doc.key} details`
                   : `Property ${doc.key} details`,
             imageUrl: doc.base64Data,
-            jwt: 999999999,
             dataType:
               doc.ownerType === 'buyer'
                 ? `buyer-${doc.ownerIndex}-${doc.key}`
@@ -731,14 +837,17 @@ function App() {
       }))
 
       if (action === 'submit' && !hasFailure) {
-        const mockedExtractionResponse = buildMockExtractedDocumentData({
-          workflowBasicDetails,
+        const extractionResult = await extractWorkspaceDocuments({
+          userId: currentUser,
+          workspaceName: activeWorkspace.name,
+          authContext,
+          documents: processingPayload,
         })
 
         const parsedResponse = {
           requestedAt: new Date().toISOString(),
           payload: processingPayload,
-          extractedData: mockedExtractionResponse,
+          extractedData: extractionResult.extractedData,
         }
 
         setParsedDocumentResponse(parsedResponse)
@@ -786,14 +895,14 @@ function App() {
     setWorkspaceLoading(true)
 
     try {
-      const existsResult = await checkWorkspaceExists(currentUser, normalizedName)
+      const existsResult = await checkWorkspaceExists(currentUser, normalizedName, authContext)
       if (existsResult.exists) {
         setWorkspaceError('Workspace already exists. Choose a different name or open it.')
         return
       }
 
-      const created = await createWorkspace(currentUser, normalizedName)
-      await addWorkspaceHistory(currentUser, normalizedName, 'created')
+      const created = await createWorkspace(currentUser, normalizedName, authContext)
+      await addWorkspaceHistory(currentUser, normalizedName, 'created', authContext)
       setWorkspaceMessage(`Workspace "${created.workspace.name}" created successfully.`)
       setActiveWorkspace(created.workspace)
       setWorkspaceName('')
@@ -801,9 +910,9 @@ function App() {
       setDocumentActionMessage('')
       setWorkflowError('')
       setWorkflowSaveMessage('')
-      await loadWorkspaceContext(currentUser)
+      await loadWorkspaceContext(currentUser, authContext)
       setSelectedWorkspace(created.workspace.name)
-      loadWorkflowProgress(currentUser, created.workspace.name)
+      await loadWorkflowProgress(currentUser, created.workspace.name)
       navigateToPath(toWorkspacePath(created.workspace.name))
       setPage('workspace-documents')
     } catch {
@@ -823,16 +932,16 @@ function App() {
     setWorkspaceLoading(true)
 
     try {
-      const opened = await openWorkspace(currentUser, selectedWorkspace)
-      await addWorkspaceHistory(currentUser, selectedWorkspace, 'opened')
+      const opened = await openWorkspace(currentUser, selectedWorkspace, authContext)
+      await addWorkspaceHistory(currentUser, selectedWorkspace, 'opened', authContext)
       setActiveWorkspace(opened.workspace)
       setWorkspaceMessage(`Workspace "${selectedWorkspace}" opened.`)
       setDocumentActionError('')
       setDocumentActionMessage('')
       setWorkflowError('')
       setWorkflowSaveMessage('')
-      await loadWorkspaceContext(currentUser)
-      loadWorkflowProgress(currentUser, selectedWorkspace)
+      await loadWorkspaceContext(currentUser, authContext)
+      await loadWorkflowProgress(currentUser, selectedWorkspace)
       navigateToPath(toWorkspacePath(selectedWorkspace))
       setPage('workspace-documents')
     } catch {
@@ -842,8 +951,56 @@ function App() {
     }
   }
 
-  const handleRequestSignup = () => {
-    setSignupRequestMessage('Signup request submitted. A portal admin will contact you.')
+  const handleRequestSignup = async (event) => {
+    event.preventDefault()
+    setSignupError('')
+    setSignupRequestMessage('')
+
+    if (signupPassword !== signupConfirmPassword) {
+      setSignupError('Password and confirmation do not match.')
+      return
+    }
+
+    setSignupLoading(true)
+
+    try {
+      await signUpWithCognito({
+        username: signupUserId,
+        password: signupPassword,
+        email: signupEmail,
+        companyCode: signupCompanyCode,
+      })
+      setSignupStep('confirm')
+      setSignupRequestMessage(
+        'Verification code sent to your email. Enter it below to confirm your account.',
+      )
+    } catch (error) {
+      setSignupError(error?.message || 'Unable to submit signup request. Please try again.')
+    } finally {
+      setSignupLoading(false)
+    }
+  }
+
+  const handleConfirmSignup = async (event) => {
+    event.preventDefault()
+    setSignupError('')
+    setSignupLoading(true)
+
+    try {
+      await confirmSignUpWithCognito(signupUserId, signupConfirmationCode)
+      setSignupStep('request')
+      setSignupUserId('')
+      setSignupEmail('')
+      setSignupCompanyCode('')
+      setSignupPassword('')
+      setSignupConfirmPassword('')
+      setSignupConfirmationCode('')
+      setSignupRequestMessage('Account confirmed. An administrator will review and approve access.')
+    } catch (error) {
+      setSignupError(error?.message || 'Unable to confirm signup. Please check the code and try again.')
+    } finally {
+      setSignupLoading(false)
+    }
   }
 
   const openProfileSettingsPage = (tabId = SETTINGS_TABS[0].id) => {
@@ -854,6 +1011,7 @@ function App() {
     setActiveSettingsTab(tabId)
     setPage('profile-settings')
     navigateToPath(toProfileSettingsPath(currentUser))
+    void listLoginHistory(currentUser, authContext).then((result) => setHistory(result.history))
   }
 
   const openLoginPage = () => {
@@ -861,15 +1019,10 @@ function App() {
     navigateToPath('/')
   }
 
-  const handlePasswordChange = (event) => {
+  const handlePasswordChange = async (event) => {
     event.preventDefault()
     setPasswordChangeError('')
     setPasswordChangeMessage('')
-
-    if (currentPasswordInput !== HARDCODED_CREDENTIALS.password) {
-      setPasswordChangeError('Current password is incorrect.')
-      return
-    }
 
     if (newPasswordInput.trim().length < 8) {
       setPasswordChangeError('New password must be at least 8 characters long.')
@@ -881,19 +1034,29 @@ function App() {
       return
     }
 
-    setPasswordChangeMessage('Password change request submitted. To be updated.')
-    setCurrentPasswordInput('')
-    setNewPasswordInput('')
-    setConfirmPasswordInput('')
+    try {
+      await changeCognitoPassword(currentPasswordInput, newPasswordInput)
+      setPasswordChangeMessage('Password changed successfully.')
+      setCurrentPasswordInput('')
+      setNewPasswordInput('')
+      setConfirmPasswordInput('')
+    } catch (error) {
+      setPasswordChangeError(
+        error?.message || 'Unable to change password. Please verify your current password.',
+      )
+    }
   }
 
-  const logout = () => {
+  const logout = async () => {
+    await signOutFromCognito()
     setCurrentUser(null)
     setAuthContext(null)
+    setProfile(null)
+    setHistory([])
     setPage('home')
     setUserId('')
     setPassword('')
-    setCompanyCode(HARDCODED_CREDENTIALS.companyCode)
+    setCompanyCode('')
     setAuthError('')
     setWorkspaceName('')
     setWorkspaceList([])
@@ -951,6 +1114,7 @@ function App() {
           setCompanyCode={setCompanyCode}
           handleSignIn={handleSignIn}
           authError={authError}
+          authLoading={authLoading}
         />
       )
     }
@@ -958,8 +1122,24 @@ function App() {
     if (page === 'signup') {
       return (
         <SignupPage
+          signupStep={signupStep}
+          signupUserId={signupUserId}
+          setSignupUserId={setSignupUserId}
+          signupEmail={signupEmail}
+          setSignupEmail={setSignupEmail}
+          signupCompanyCode={signupCompanyCode}
+          setSignupCompanyCode={setSignupCompanyCode}
+          signupPassword={signupPassword}
+          setSignupPassword={setSignupPassword}
+          signupConfirmPassword={signupConfirmPassword}
+          setSignupConfirmPassword={setSignupConfirmPassword}
+          signupConfirmationCode={signupConfirmationCode}
+          setSignupConfirmationCode={setSignupConfirmationCode}
           handleRequestSignup={handleRequestSignup}
+          handleConfirmSignup={handleConfirmSignup}
           signupRequestMessage={signupRequestMessage}
+          signupError={signupError}
+          signupLoading={signupLoading}
         />
       )
     }
@@ -1046,29 +1226,35 @@ function App() {
     <div className={`portal-app-shell theme-${theme}`}>
 
       <div className="app-content">
-        <div className={`portal-app ${page === 'workspace-documents' ? 'workspace-documents-layout' : ''}`}>
-          <header className="hero">
-            <div className="hero-top-row">
-              <p className="eyebrow">AWS Amplify Ready Portal</p>
-              {currentUser ? (
-                <button type="button" className="ghost hero-auth-btn" onClick={logout}>
-                  Log off
-                </button>
-              ) : (
-                <button type="button" className="ghost hero-auth-btn" onClick={openLoginPage}>
-                  Sign in
-                </button>
-              )}
-            </div>
-            <h1>Service Access Frontend</h1>
-            <p>
-              A secure single-page portal to access user profiles and invoke backend API
-              endpoints for service workflows.
-            </p>
-          </header>
+        {authChecking ? (
+          <div className="portal-app auth-session-checking">
+            <p>Restoring your session...</p>
+          </div>
+        ) : (
+          <div className={`portal-app ${page === 'workspace-documents' ? 'workspace-documents-layout' : ''}`}>
+            <header className="hero">
+              <div className="hero-top-row">
+                <p className="eyebrow">AWS Amplify Ready Portal</p>
+                {currentUser ? (
+                  <button type="button" className="ghost hero-auth-btn" onClick={logout}>
+                    Log off
+                  </button>
+                ) : (
+                  <button type="button" className="ghost hero-auth-btn" onClick={openLoginPage}>
+                    Sign in
+                  </button>
+                )}
+              </div>
+              <h1>Service Access Frontend</h1>
+              <p>
+                A secure single-page portal to access user profiles and invoke backend API
+                endpoints for service workflows.
+              </p>
+            </header>
 
-          <main>{renderPageContent()}</main>
-        </div>
+            <main>{renderPageContent()}</main>
+          </div>
+        )}
       </div>
     </div>
   )

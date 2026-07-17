@@ -7,6 +7,7 @@ function LoginPage({
   setCompanyCode,
   handleSignIn,
   authError,
+  authLoading,
 }) {
   return (
     <section className="card">
@@ -40,7 +41,9 @@ function LoginPage({
           required
         />
 
-        <button type="submit">Sign In</button>
+        <button type="submit" disabled={authLoading}>
+          {authLoading ? 'Signing in...' : 'Sign In'}
+        </button>
       </form>
       {authError && <p className="error-message">{authError}</p>}
     </section>

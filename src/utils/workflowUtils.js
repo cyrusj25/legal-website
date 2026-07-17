@@ -324,13 +324,6 @@ export function normalizeExtractedDocumentData(extractedData, buyerCount, seller
   }
 }
 
-export function buildMockExtractedDocumentData({ workflowBasicDetails }) {
-  const buyerCount = Number.parseInt(workflowBasicDetails.numberOfBuyers, 10) || 0
-  const sellerCount = Number.parseInt(workflowBasicDetails.numberOfSellers, 10) || 0
-
-  return createEmptyExtractedDocumentData(buyerCount, sellerCount)
-}
-
 export function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
