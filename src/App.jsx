@@ -247,7 +247,8 @@ function App() {
     setAuthLoading(true)
 
     try {
-      const signInResult = await signInWithCognito(userId, password)
+      const emailId = userId.trim().toLowerCase()
+      const signInResult = await signInWithCognito(emailId, password)
 
       if (!signInResult?.isSignedIn) {
         setAuthError('Sign-in requires additional verification steps that are not yet supported.')
@@ -278,7 +279,7 @@ function App() {
       setPage('profile')
       setPassword('')
     } catch {
-      setAuthError('Invalid credentials. Use a registered user ID and password.')
+      setAuthError('Invalid credentials. Use a registered email ID and password.')
     } finally {
       setAuthLoading(false)
     }

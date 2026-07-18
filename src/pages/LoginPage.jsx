@@ -11,12 +11,14 @@ function LoginPage({
     <section className="card">
       <h2>Sign In</h2>
       <form onSubmit={handleSignIn} className="stacked-form">
-        <label htmlFor="user-id">User ID</label>
+        <label htmlFor="user-id">Email ID</label>
         <input
           id="user-id"
           value={userId}
           onChange={(event) => setUserId(event.target.value)}
-          autoComplete="username"
+          autoComplete="email"
+          inputMode="email"
+          placeholder="name@example.com"
           required
         />
 
