@@ -33,6 +33,11 @@ VITE_API_BASE_URL=https://<your-api-domain-or-gateway-stage>
 VITE_COGNITO_REGION=<aws-region>
 VITE_COGNITO_USER_POOL_ID=<cognito-user-pool-id>
 VITE_COGNITO_USER_POOL_CLIENT_ID=<cognito-app-client-id>
+VITE_COGNITO_DOMAIN=<your-user-pool-domain>
+VITE_COGNITO_REDIRECT_SIGN_IN=<comma-separated-callback-urls>
+VITE_COGNITO_REDIRECT_SIGN_OUT=<comma-separated-logout-urls>
+VITE_COGNITO_SCOPES=<comma-separated-scopes-like-openid,email,profile>
+VITE_COGNITO_RESPONSE_TYPE=code
 ```
 
 Example:
@@ -43,6 +48,11 @@ VITE_API_BASE_URL=https://api.example.com/prod
 VITE_COGNITO_REGION=us-east-1
 VITE_COGNITO_USER_POOL_ID=us-east-1_exampleId
 VITE_COGNITO_USER_POOL_CLIENT_ID=exampleclientid123
+VITE_COGNITO_DOMAIN=your-domain.auth.us-east-1.amazoncognito.com
+VITE_COGNITO_REDIRECT_SIGN_IN=https://main.d1rzy7vu37azy6.amplifyapp.com
+VITE_COGNITO_REDIRECT_SIGN_OUT=https://main.d1rzy7vu37azy6.amplifyapp.com
+VITE_COGNITO_SCOPES=openid,email,profile
+VITE_COGNITO_RESPONSE_TYPE=code
 EOF
 ```
 

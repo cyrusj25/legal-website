@@ -13,12 +13,34 @@ import {
 import { COGNITO_CONFIG } from '../config/authConfig'
 
 export function configureAuth() {
+  const oauthConfig = COGNITO_CONFIG.oauth || {}
+  const hasOAuthConfig =
+    Boolean(oauthConfig.domain) &&
+    Array.isArray(oauthConfig.redirectSignIn) &&
+    oauthConfig.redirectSignIn.length > 0 &&
+    Array.isArray(oauthConfig.redirectSignOut) &&
+    oauthConfig.redirectSignOut.length > 0
+
+  const cognitoConfig = {
+    userPoolId: COGNITO_CONFIG.userPoolId,
+    userPoolClientId: COGNITO_CONFIG.userPoolClientId,
+  }
+
+  if (hasOAuthConfig) {
+    cognitoConfig.loginWith = {
+      oauth: {
+        domain: oauthConfig.domain,
+        scopes: oauthConfig.scopes,
+        redirectSignIn: oauthConfig.redirectSignIn,
+        redirectSignOut: oauthConfig.redirectSignOut,
+        responseType: oauthConfig.responseType,
+      },
+    }
+  }
+
   Amplify.configure({
     Auth: {
-      Cognito: {
-        userPoolId: COGNITO_CONFIG.userPoolId,
-        userPoolClientId: COGNITO_CONFIG.userPoolClientId,
-      },
+      Cognito: cognitoConfig,
     },
   })
 }
