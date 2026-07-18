@@ -11,8 +11,8 @@ function splitCsvEnv(value, fallback = []) {
 
 export const COGNITO_CONFIG = {
   region: import.meta.env.VITE_COGNITO_REGION || 'us-east-1',
-  userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID || 'us-east-1_W6xlXDUQi',
-  userPoolClientId: import.meta.env.VITE_COGNITO_USER_POOL_CLIENT_ID || '5pbe34ckjtre6arssgj2hvpp70',
+  userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID || 'us-east-1_ZjVTgRMTo',
+  userPoolClientId: import.meta.env.VITE_COGNITO_USER_POOL_CLIENT_ID || '5tccouindp8mh83f3kklrr659c',
   oauth: {
     domain: import.meta.env.VITE_COGNITO_DOMAIN || '',
     redirectSignIn: splitCsvEnv(import.meta.env.VITE_COGNITO_REDIRECT_SIGN_IN),
