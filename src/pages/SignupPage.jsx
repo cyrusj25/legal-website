@@ -4,8 +4,6 @@ function SignupPage({
   setSignupUserId,
   signupEmail,
   setSignupEmail,
-  signupCompanyCode,
-  setSignupCompanyCode,
   signupPassword,
   setSignupPassword,
   signupConfirmPassword,
@@ -66,15 +64,6 @@ function SignupPage({
           value={signupEmail}
           onChange={(event) => setSignupEmail(event.target.value)}
           autoComplete="email"
-          required
-        />
-
-        <label htmlFor="signup-company-code">Company Code</label>
-        <input
-          id="signup-company-code"
-          value={signupCompanyCode}
-          onChange={(event) => setSignupCompanyCode(event.target.value.toUpperCase())}
-          autoComplete="organization"
           required
         />
 

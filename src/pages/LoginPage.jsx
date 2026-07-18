@@ -1,10 +1,8 @@
 function LoginPage({
   userId,
   password,
-  companyCode,
   setUserId,
   setPassword,
-  setCompanyCode,
   handleSignIn,
   authError,
   authLoading,
@@ -29,15 +27,6 @@ function LoginPage({
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           autoComplete="current-password"
-          required
-        />
-
-        <label htmlFor="company-code">Company Code</label>
-        <input
-          id="company-code"
-          value={companyCode}
-          onChange={(event) => setCompanyCode(event.target.value.toUpperCase())}
-          autoComplete="organization"
           required
         />
 

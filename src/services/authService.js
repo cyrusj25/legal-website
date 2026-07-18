@@ -49,14 +49,13 @@ export async function signInWithCognito(username, password) {
   return signIn({ username, password })
 }
 
-export async function signUpWithCognito({ username, password, email, companyCode }) {
+export async function signUpWithCognito({ username, password, email }) {
   return signUp({
     username,
     password,
     options: {
       userAttributes: {
         email,
-        'custom:company_code': companyCode,
       },
     },
   })
@@ -93,7 +92,6 @@ export async function getAuthenticatedUserContext() {
   return {
     userId: user.username,
     email: attributes.email || '',
-    companyCode: attributes['custom:company_code'] || '',
   }
 }
 

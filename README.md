@@ -55,9 +55,6 @@ VITE_COGNITO_SCOPES=openid,email,profile
 VITE_COGNITO_RESPONSE_TYPE=code
 EOF
 ```
-
-The Cognito User Pool must define a custom attribute `custom:company_code` (string, mutable) since it is set at signup and validated at sign-in.
-
 ## Source organization
 
 - [src/config/appConfig.js](src/config/appConfig.js): shared constants and static configuration.

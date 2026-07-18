@@ -90,7 +90,6 @@ function App() {
   const [page, setPage] = useState('home')
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
-  const [companyCode, setCompanyCode] = useState('')
   const [currentUser, setCurrentUser] = useState(null)
   const [authContext, setAuthContext] = useState(null)
   const [authError, setAuthError] = useState('')
@@ -99,7 +98,6 @@ function App() {
   const [signupStep, setSignupStep] = useState('request')
   const [signupUserId, setSignupUserId] = useState('')
   const [signupEmail, setSignupEmail] = useState('')
-  const [signupCompanyCode, setSignupCompanyCode] = useState('')
   const [signupPassword, setSignupPassword] = useState('')
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('')
   const [signupConfirmationCode, setSignupConfirmationCode] = useState('')
@@ -169,7 +167,6 @@ function App() {
 
       const nextAuthContext = {
         userId: authenticatedUser.userId,
-        companyCode: authenticatedUser.companyCode,
         email: authenticatedUser.email,
         loginTimestamp: formatLoginTimestamp(new Date()),
       }
@@ -259,20 +256,9 @@ function App() {
 
       const authenticatedUser = await getAuthenticatedUserContext()
 
-      if (
-        companyCode &&
-        authenticatedUser.companyCode &&
-        companyCode !== authenticatedUser.companyCode
-      ) {
-        await signOutFromCognito()
-        setAuthError('Company code does not match this account.')
-        return
-      }
-
       const signInTimestamp = new Date()
       const nextAuthContext = {
         userId: authenticatedUser.userId,
-        companyCode: authenticatedUser.companyCode || companyCode,
         email: authenticatedUser.email,
         loginTimestamp: formatLoginTimestamp(signInTimestamp),
       }
@@ -292,7 +278,7 @@ function App() {
       setPage('profile')
       setPassword('')
     } catch {
-      setAuthError('Invalid credentials. Use a registered user ID, password, and company code.')
+      setAuthError('Invalid credentials. Use a registered user ID and password.')
     } finally {
       setAuthLoading(false)
     }
@@ -968,7 +954,6 @@ function App() {
         username: signupUserId,
         password: signupPassword,
         email: signupEmail,
-        companyCode: signupCompanyCode,
       })
       setSignupStep('confirm')
       setSignupRequestMessage(
@@ -991,7 +976,6 @@ function App() {
       setSignupStep('request')
       setSignupUserId('')
       setSignupEmail('')
-      setSignupCompanyCode('')
       setSignupPassword('')
       setSignupConfirmPassword('')
       setSignupConfirmationCode('')
@@ -1056,7 +1040,6 @@ function App() {
     setPage('home')
     setUserId('')
     setPassword('')
-    setCompanyCode('')
     setAuthError('')
     setWorkspaceName('')
     setWorkspaceList([])
@@ -1108,10 +1091,8 @@ function App() {
         <LoginPage
           userId={userId}
           password={password}
-          companyCode={companyCode}
           setUserId={setUserId}
           setPassword={setPassword}
-          setCompanyCode={setCompanyCode}
           handleSignIn={handleSignIn}
           authError={authError}
           authLoading={authLoading}
@@ -1127,8 +1108,6 @@ function App() {
           setSignupUserId={setSignupUserId}
           signupEmail={signupEmail}
           setSignupEmail={setSignupEmail}
-          signupCompanyCode={signupCompanyCode}
-          setSignupCompanyCode={setSignupCompanyCode}
           signupPassword={signupPassword}
           setSignupPassword={setSignupPassword}
           signupConfirmPassword={signupConfirmPassword}
